@@ -79,7 +79,7 @@ jobs:
           branch="${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}"
           build_date="$(date '+%Y%m%d-%H%M%S')"
 
-          echo "build_date=${build_date}"
+          echo "build_date=${build_date}" >> $GITHUB_OUTPUT
 
           if [[ "${branch}" == "master" ]]
           then
@@ -191,48 +191,48 @@ jobs:
     #    run: |
     #      docker logout
 
-  ma#nifest_release:
-    #runs-on: ubuntu-latest
-    #needs: build_release
-    #steps:
-    #  - name: DockerHub Login
-    #    if: success() && startsWith(github.ref, 'refs/tags/v')
-    #    env:
-    #      DOCKER_HUB_USER: ${{ secrets.DOCKER_HUB_USER }}
-    #      DOCKER_HUB_PASS: ${{ secrets.DOCKER_HUB_PASS }}
-    #    run: |
-    #      echo "${DOCKER_HUB_PASS}" | docker login -u "${DOCKER_HUB_USER}" --password-stdin
+  #ma#nifest_release:
+  #runs-on: ubuntu-latest
+  #needs: build_release
+  #steps:
+  #  - name: DockerHub Login
+  #    if: success() && startsWith(github.ref, 'refs/tags/v')
+  #    env:
+  #      DOCKER_HUB_USER: ${{ secrets.DOCKER_HUB_USER }}
+  #      DOCKER_HUB_PASS: ${{ secrets.DOCKER_HUB_PASS }}
+  #    run: |
+  #      echo "${DOCKER_HUB_PASS}" | docker login -u "${DOCKER_HUB_USER}" --password-stdin
 
-    #  - name: Docker Publishing Manifest
-    #    if: success() && startsWith(github.ref, 'refs/tags/v')
-    #    run: |
-    #      BUILD_VERSION=${{ needs.build_release.outputs.build_version }}
-    #      docker manifest create ${DOCKER_IMAGE}:${BUILD_VERSION} \
-    #          ${DOCKER_IMAGE}:${BUILD_VERSION}-amd64 \
-    #          ${DOCKER_IMAGE}:${BUILD_VERSION}-arm32v7 \
-    #          ${DOCKER_IMAGE}:${BUILD_VERSION}-arm64v8
+  #  - name: Docker Publishing Manifest
+  #    if: success() && startsWith(github.ref, 'refs/tags/v')
+  #    run: |
+  #      BUILD_VERSION=${{ needs.build_release.outputs.build_version }}
+  #      docker manifest create ${DOCKER_IMAGE}:${BUILD_VERSION} \
+  #          ${DOCKER_IMAGE}:${BUILD_VERSION}-amd64 \
+  #          ${DOCKER_IMAGE}:${BUILD_VERSION}-arm32v7 \
+  #          ${DOCKER_IMAGE}:${BUILD_VERSION}-arm64v8
 
-    #      docker manifest annotate ${DOCKER_IMAGE}:${BUILD_VERSION} ${DOCKER_IMAGE}:${BUILD_VERSION}-arm32v7 --os=linux --arch=arm --variant=v7
-    #      docker manifest annotate ${DOCKER_IMAGE}:${BUILD_VERSION} ${DOCKER_IMAGE}:${BUILD_VERSION}-arm64v8 --os=linux --arch=arm64 --variant=v8
+  #      docker manifest annotate ${DOCKER_IMAGE}:${BUILD_VERSION} ${DOCKER_IMAGE}:${BUILD_VERSION}-arm32v7 --os=linux --arch=arm --variant=v7
+  #      docker manifest annotate ${DOCKER_IMAGE}:${BUILD_VERSION} ${DOCKER_IMAGE}:${BUILD_VERSION}-arm64v8 --os=linux --arch=arm64 --variant=v8
 
-    #      docker manifest push ${DOCKER_IMAGE}:${BUILD_VERSION}
+  #      docker manifest push ${DOCKER_IMAGE}:${BUILD_VERSION}
 
-    #      TAG=beta
-    #      if [[ ${BUILD_VERSION} != *"beta"* ]]; then
-    #        TAG=latest
-    #      fi
+  #      TAG=beta
+  #      if [[ ${BUILD_VERSION} != *"beta"* ]]; then
+  #        TAG=latest
+  #      fi
 
-    #      docker manifest create ${DOCKER_IMAGE}:${TAG} \
-    #          ${DOCKER_IMAGE}:${BUILD_VERSION}-amd64 \
-    #          ${DOCKER_IMAGE}:${BUILD_VERSION}-arm32v7 \
-    #          ${DOCKER_IMAGE}:${BUILD_VERSION}-arm64v8
+  #      docker manifest create ${DOCKER_IMAGE}:${TAG} \
+  #          ${DOCKER_IMAGE}:${BUILD_VERSION}-amd64 \
+  #          ${DOCKER_IMAGE}:${BUILD_VERSION}-arm32v7 \
+  #          ${DOCKER_IMAGE}:${BUILD_VERSION}-arm64v8
 
-    #      docker manifest annotate ${DOCKER_IMAGE}:${TAG} ${DOCKER_IMAGE}:${BUILD_VERSION}-arm32v7 --os=linux --arch=arm --variant=v7
-    #      docker manifest annotate ${DOCKER_IMAGE}:${TAG} ${DOCKER_IMAGE}:${BUILD_VERSION}-arm64v8 --os=linux --arch=arm64 --variant=v8
+  #      docker manifest annotate ${DOCKER_IMAGE}:${TAG} ${DOCKER_IMAGE}:${BUILD_VERSION}-arm32v7 --os=linux --arch=arm --variant=v7
+  #      docker manifest annotate ${DOCKER_IMAGE}:${TAG} ${DOCKER_IMAGE}:${BUILD_VERSION}-arm64v8 --os=linux --arch=arm64 --variant=v8
 
-    #      docker manifest push ${DOCKER_IMAGE}:${TAG}
+  #      docker manifest push ${DOCKER_IMAGE}:${TAG}
 
-    #  - name: Docker Logout
-    #    if: success() && startsWith(github.ref, 'refs/tags/v')
-    #    run: |
-    #      docker logout
+  #  - name: Docker Logout
+  #    if: success() && startsWith(github.ref, 'refs/tags/v')
+  #    run: |
+  #      docker logout
