@@ -1,14 +1,37 @@
 name: Allure Docker Service Workflow
 
 on:
-  push:
-    branches:
-      - "*"
-
-    tags:
-      - v*
-
-  pull_request:
+  workflow_dispatch:
+    inputs:
+      domain:
+        type: choice
+        description: Domain
+        default: devops
+        options:
+          - devops
+      env:
+        type: choice
+        description: Environment to deploy to
+        options:
+          - dev
+          - dev2
+          - stage
+          - stage-infra-2
+          - prod
+          - infra-houston
+          - reno
+      version:
+        type: string
+        description: Image tag to deploy
+        default: ""
+      build:
+        type: boolean
+        description: Whether to build de image
+        default: true
+      deploy:
+        type: boolean
+        description: Whether to deploy to the selected environment
+        default: false
 
 env:
   DOCKER_IMAGE: frankescobar/allure-docker-service
@@ -21,153 +44,195 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        ARCH: [amd64, arm32v7, arm64v8]
+        ARCH: [amd64]
         include:
-        - ARCH: amd64
-          DOCKER_FILE: Dockerfile.bionic
-          JDK: adoptopenjdk:11-jre-openj9-bionic
-          QEMU_ARCH: x86_64
+          - ARCH: amd64
+            DOCKER_FILE: Dockerfile.bionic
+            JDK: adoptopenjdk:11-jre-openj9-bionic
+            QEMU_ARCH: x86_64
 
-        - ARCH: arm32v7
-          DOCKER_FILE: Dockerfile.bionic
-          JDK: adoptopenjdk:11-jdk-hotspot-bionic
-          QEMU_ARCH: arm
+          - ARCH: arm32v7
+            DOCKER_FILE: Dockerfile.bionic
+            JDK: adoptopenjdk:11-jdk-hotspot-bionic
+            QEMU_ARCH: arm
 
-        - ARCH: arm64v8
-          DOCKER_FILE: Dockerfile.bionic
-          JDK: adoptopenjdk:11-jre-hotspot-bionic
-          QEMU_ARCH: aarch64
+          - ARCH: arm64v8
+            DOCKER_FILE: Dockerfile.bionic
+            JDK: adoptopenjdk:11-jre-hotspot-bionic
+            QEMU_ARCH: aarch64
 
-    if: github.event_name == 'push'
-    outputs:
-      build_version: ${{ steps.prepare.outputs.build_version }}
     steps:
-      - name: Pulling code
-        uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
-      - name: Preparing
-        id: prepare
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
+
+      - name: Set outputs
+        id: vars
+        shell: bash
         run: |
-          echo "DOCKER BUILD: Build Docker image."
-          echo "DOCKER BUILD: arch - ${{matrix.ARCH}}."
-          echo "DOCKER BUILD: jdk -> ${{matrix.JDK}}."
-          echo "DOCKER BUILD: build version -> ${VERSION}."
-          echo "DOCKER BUILD: allure version -> ${ALLURE_RELEASE}."
-          echo "DOCKER BUILD: qemu arch - ${{matrix.QEMU_ARCH}}."
-          echo "DOCKER BUILD: docker file - ${{matrix.DOCKER_FILE}}."          
+          sha_short="$(git rev-parse --short HEAD)"
+          branch="${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}"
+          build_date="$(date '+%Y%m%d-%H%M%S')"
 
-          VERSION=na
-          TAGS="--tag ${DOCKER_IMAGE}:build"
+          echo "build_date=${build_date}" >> $GITHUB_OUTPUT
 
-          if [[ $GITHUB_REF == refs/tags/* ]]; then
-            VERSION=${GITHUB_REF#refs/tags/v}
-            if [[ $GITHUB_REF == *"beta"* ]]; then
-                TAGS="--tag ${DOCKER_IMAGE}:${VERSION} --tag ${DOCKER_IMAGE}:${VERSION}-${{matrix.ARCH}} --tag ${DOCKER_IMAGE}:beta --tag ${DOCKER_IMAGE}:build"
-            else
-                TAGS="--tag ${DOCKER_IMAGE}:${VERSION} --tag ${DOCKER_IMAGE}:${VERSION}-${{matrix.ARCH}} --tag ${DOCKER_IMAGE}:latest --tag ${DOCKER_IMAGE}:build"
-            fi
-          fi
-
-          echo ::set-output name=docker_image::${DOCKER_IMAGE}
-          echo ::set-output name=build_version::${VERSION}
-          echo ::set-output name=docker_args::--build-arg ARCH=${{matrix.ARCH}} \
-            --build-arg JDK=${{matrix.JDK}} \
-            --build-arg QEMU_ARCH=${{matrix.QEMU_ARCH}} \
-            --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
-            --build-arg BUILD_VERSION=${VERSION} \
-            --build-arg BUILD_REF=${GITHUB_SHA::8} \
-            --build-arg ALLURE_RELEASE=${ALLURE_RELEASE} \
-            ${TAGS} --file docker/Dockerfile.bionic .
-
-      - name: Setting up QEMU
-        run: |
-          # Prepare qemu to build non amd64 / x86_64 images
-          docker run --rm --privileged multiarch/qemu-user-static:register --reset
-          mkdir tmp
-          pushd tmp &&
-          curl -L -o qemu-x86_64-static.tar.gz https://github.com/multiarch/qemu-user-static/releases/download/$QEMU_VERSION/qemu-x86_64-static.tar.gz && tar xzf qemu-x86_64-static.tar.gz &&
-          curl -L -o qemu-arm-static.tar.gz https://github.com/multiarch/qemu-user-static/releases/download/$QEMU_VERSION/qemu-arm-static.tar.gz && tar xzf qemu-arm-static.tar.gz &&
-          curl -L -o qemu-aarch64-static.tar.gz https://github.com/multiarch/qemu-user-static/releases/download/$QEMU_VERSION/qemu-aarch64-static.tar.gz && tar xzf qemu-aarch64-static.tar.gz &&
-          popd
-
-      - name: Docker Building
-        run: |
-          docker build --no-cache ${{ steps.prepare.outputs.docker_args }}
-
-      - name: Docker Testing
-        run: |
-          echo "DOCKER TEST: Test Docker image."
-          echo "DOCKER TEST: testing image -> ${DOCKER_IMAGE}:build"
-
-          docker run -d --rm --name=testing ${DOCKER_IMAGE}:build
-          if [ $? -ne 0 ]; then
-            echo "DOCKER TEST: FAILED - Docker container testing failed to start."
-            exit 1
+          if [[ "${branch}" == "master" ]]
+          then
+            echo "tag=${sha_short}" >> $GITHUB_OUTPUT
           else
-            echo "DOCKER TEST: PASSED - Docker container testing succeeded to start."
+            echo "tag=${branch}-${sha_short}" >> $GITHUB_OUTPUT
           fi
 
-      - name: DockerHub Login
-        if: success() && startsWith(github.ref, 'refs/tags/v')
-        env:
-          DOCKER_HUB_USER: ${{ secrets.DOCKER_HUB_USER }}
-          DOCKER_HUB_PASS: ${{ secrets.DOCKER_HUB_PASS }}
-        run: |
-          echo "${DOCKER_HUB_PASS}" | docker login -u "${DOCKER_HUB_USER}" --password-stdin
+      - name: Build and Push
+        uses: docker/build-push-action@v2
+        with:
+          push: false
+          args: |
+            ARCH=${{ matrix.ARCH }}
+            JDK=${{ matrix.JDK }} 
+            QEMU_ARCH=${{ matrix.QEMU_ARCH }}
+            BUILD_DATE=${{ steps.vars.outputs.build_date }}
+            BUILD_VERSION=${{ steps.vars.outputs.tag }}
+            BUILD_REF=${{ steps.vars.outputs.sha_short }}
+            ALLURE_RELEASE=${ALLURE_RELEASE}
+          tags: ${{ steps.login-ecr.outputs.registry }}/mechanicadvisor/${{ github.event.inputs.domain }}/esdb-app-pod-restarter/devrel:${{ steps.vars.outputs.tag }}-${{ matrix.ARCH }}
+          file: ./docker/${{ matrix.DOCKER_FILE }}
 
-      - name: Docker Publishing
-        if: success() && startsWith(github.ref, 'refs/tags/v')
-        run: |
-          echo "DOCKER PUSH: pushing - ${DOCKER_IMAGE}:${{ steps.prepare.outputs.build_version }}-${{matrix.ARCH}}."
-          docker push ${DOCKER_IMAGE}:${{ steps.prepare.outputs.build_version }}-${{matrix.ARCH}}
+    #if: github.event_name == 'push'
+    #outputs:
+    #  build_version: ${{ steps.prepare.outputs.build_version }}
+    #steps:
+    #  - name: Pulling code
+    #    uses: actions/checkout@v2
 
-      - name: Docker Logout
-        if: success() && startsWith(github.ref, 'refs/tags/v')
-        run: |
-          docker logout
+    #  - name: Preparing
+    #    id: prepare
+    #    run: |
+    #      echo "DOCKER BUILD: Build Docker image."
+    #      echo "DOCKER BUILD: arch - ${{matrix.ARCH}}."
+    #      echo "DOCKER BUILD: jdk -> ${{matrix.JDK}}."
+    #      echo "DOCKER BUILD: build version -> ${VERSION}."
+    #      echo "DOCKER BUILD: allure version -> ${ALLURE_RELEASE}."
+    #      echo "DOCKER BUILD: qemu arch - ${{matrix.QEMU_ARCH}}."
+    #      echo "DOCKER BUILD: docker file - ${{matrix.DOCKER_FILE}}."
 
-  manifest_release:
-    runs-on: ubuntu-latest
-    needs: build_release
-    steps:
-      - name: DockerHub Login
-        if: success() && startsWith(github.ref, 'refs/tags/v')
-        env:
-          DOCKER_HUB_USER: ${{ secrets.DOCKER_HUB_USER }}
-          DOCKER_HUB_PASS: ${{ secrets.DOCKER_HUB_PASS }}
-        run: |
-          echo "${DOCKER_HUB_PASS}" | docker login -u "${DOCKER_HUB_USER}" --password-stdin
+    #      VERSION=na
+    #      TAGS="--tag ${DOCKER_IMAGE}:build"
 
-      - name: Docker Publishing Manifest
-        if: success() && startsWith(github.ref, 'refs/tags/v')
-        run: |
-          BUILD_VERSION=${{ needs.build_release.outputs.build_version }}
-          docker manifest create ${DOCKER_IMAGE}:${BUILD_VERSION} \
-              ${DOCKER_IMAGE}:${BUILD_VERSION}-amd64 \
-              ${DOCKER_IMAGE}:${BUILD_VERSION}-arm32v7 \
-              ${DOCKER_IMAGE}:${BUILD_VERSION}-arm64v8
+    #      if [[ $GITHUB_REF == refs/tags/* ]]; then
+    #        VERSION=${GITHUB_REF#refs/tags/v}
+    #        if [[ $GITHUB_REF == *"beta"* ]]; then
+    #            TAGS="--tag ${DOCKER_IMAGE}:${VERSION} --tag ${DOCKER_IMAGE}:${VERSION}-${{matrix.ARCH}} --tag ${DOCKER_IMAGE}:beta --tag ${DOCKER_IMAGE}:build"
+    #        else
+    #            TAGS="--tag ${DOCKER_IMAGE}:${VERSION} --tag ${DOCKER_IMAGE}:${VERSION}-${{matrix.ARCH}} --tag ${DOCKER_IMAGE}:latest --tag ${DOCKER_IMAGE}:build"
+    #        fi
+    #      fi
 
-          docker manifest annotate ${DOCKER_IMAGE}:${BUILD_VERSION} ${DOCKER_IMAGE}:${BUILD_VERSION}-arm32v7 --os=linux --arch=arm --variant=v7
-          docker manifest annotate ${DOCKER_IMAGE}:${BUILD_VERSION} ${DOCKER_IMAGE}:${BUILD_VERSION}-arm64v8 --os=linux --arch=arm64 --variant=v8
+    #      echo ::set-output name=docker_image::${DOCKER_IMAGE}
+    #      echo ::set-output name=build_version::${VERSION}
+    #      echo ::set-output name=docker_args::--build-arg ARCH=${{matrix.ARCH}} \
+    #        --build-arg JDK=${{matrix.JDK}} \
+    #        --build-arg QEMU_ARCH=${{matrix.QEMU_ARCH}} \
+    #        --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
+    #        --build-arg BUILD_VERSION=${VERSION} \
+    #        --build-arg BUILD_REF=${GITHUB_SHA::8} \
+    #        --build-arg ALLURE_RELEASE=${ALLURE_RELEASE} \
+    #        ${TAGS} --file docker/Dockerfile.bionic .
 
-          docker manifest push ${DOCKER_IMAGE}:${BUILD_VERSION}
+    #  - name: Setting up QEMU
+    #    run: |
+    #      # Prepare qemu to build non amd64 / x86_64 images
+    #      docker run --rm --privileged multiarch/qemu-user-static:register --reset
+    #      mkdir tmp
+    #      pushd tmp &&
+    #      curl -L -o qemu-x86_64-static.tar.gz https://github.com/multiarch/qemu-user-static/releases/download/$QEMU_VERSION/qemu-x86_64-static.tar.gz && tar xzf qemu-x86_64-static.tar.gz &&
+    #      curl -L -o qemu-arm-static.tar.gz https://github.com/multiarch/qemu-user-static/releases/download/$QEMU_VERSION/qemu-arm-static.tar.gz && tar xzf qemu-arm-static.tar.gz &&
+    #      curl -L -o qemu-aarch64-static.tar.gz https://github.com/multiarch/qemu-user-static/releases/download/$QEMU_VERSION/qemu-aarch64-static.tar.gz && tar xzf qemu-aarch64-static.tar.gz &&
+    #      popd
 
-          TAG=beta
-          if [[ ${BUILD_VERSION} != *"beta"* ]]; then
-            TAG=latest
-          fi
+    #  - name: Docker Building
+    #    run: |
+    #      docker build --no-cache ${{ steps.prepare.outputs.docker_args }}
 
-          docker manifest create ${DOCKER_IMAGE}:${TAG} \
-              ${DOCKER_IMAGE}:${BUILD_VERSION}-amd64 \
-              ${DOCKER_IMAGE}:${BUILD_VERSION}-arm32v7 \
-              ${DOCKER_IMAGE}:${BUILD_VERSION}-arm64v8
+    #  - name: Docker Testing
+    #    run: |
+    #      echo "DOCKER TEST: Test Docker image."
+    #      echo "DOCKER TEST: testing image -> ${DOCKER_IMAGE}:build"
 
-          docker manifest annotate ${DOCKER_IMAGE}:${TAG} ${DOCKER_IMAGE}:${BUILD_VERSION}-arm32v7 --os=linux --arch=arm --variant=v7
-          docker manifest annotate ${DOCKER_IMAGE}:${TAG} ${DOCKER_IMAGE}:${BUILD_VERSION}-arm64v8 --os=linux --arch=arm64 --variant=v8
+    #      docker run -d --rm --name=testing ${DOCKER_IMAGE}:build
+    #      if [ $? -ne 0 ]; then
+    #        echo "DOCKER TEST: FAILED - Docker container testing failed to start."
+    #        exit 1
+    #      else
+    #        echo "DOCKER TEST: PASSED - Docker container testing succeeded to start."
+    #      fi
 
-          docker manifest push ${DOCKER_IMAGE}:${TAG}
+    #  - name: DockerHub Login
+    #    if: success() && startsWith(github.ref, 'refs/tags/v')
+    #    env:
+    #      DOCKER_HUB_USER: ${{ secrets.DOCKER_HUB_USER }}
+    #      DOCKER_HUB_PASS: ${{ secrets.DOCKER_HUB_PASS }}
+    #    run: |
+    #      echo "${DOCKER_HUB_PASS}" | docker login -u "${DOCKER_HUB_USER}" --password-stdin
 
-      - name: Docker Logout
-        if: success() && startsWith(github.ref, 'refs/tags/v')
-        run: |
-          docker logout
+    #  - name: Docker Publishing
+    #    if: success() && startsWith(github.ref, 'refs/tags/v')
+    #    run: |
+    #      echo "DOCKER PUSH: pushing - ${DOCKER_IMAGE}:${{ steps.prepare.outputs.build_version }}-${{matrix.ARCH}}."
+    #      docker push ${DOCKER_IMAGE}:${{ steps.prepare.outputs.build_version }}-${{matrix.ARCH}}
+
+    #  - name: Docker Logout
+    #    if: success() && startsWith(github.ref, 'refs/tags/v')
+    #    run: |
+    #      docker logout
+
+  #ma#nifest_release:
+  #runs-on: ubuntu-latest
+  #needs: build_release
+  #steps:
+  #  - name: DockerHub Login
+  #    if: success() && startsWith(github.ref, 'refs/tags/v')
+  #    env:
+  #      DOCKER_HUB_USER: ${{ secrets.DOCKER_HUB_USER }}
+  #      DOCKER_HUB_PASS: ${{ secrets.DOCKER_HUB_PASS }}
+  #    run: |
+  #      echo "${DOCKER_HUB_PASS}" | docker login -u "${DOCKER_HUB_USER}" --password-stdin
+
+  #  - name: Docker Publishing Manifest
+  #    if: success() && startsWith(github.ref, 'refs/tags/v')
+  #    run: |
+  #      BUILD_VERSION=${{ needs.build_release.outputs.build_version }}
+  #      docker manifest create ${DOCKER_IMAGE}:${BUILD_VERSION} \
+  #          ${DOCKER_IMAGE}:${BUILD_VERSION}-amd64 \
+  #          ${DOCKER_IMAGE}:${BUILD_VERSION}-arm32v7 \
+  #          ${DOCKER_IMAGE}:${BUILD_VERSION}-arm64v8
+
+  #      docker manifest annotate ${DOCKER_IMAGE}:${BUILD_VERSION} ${DOCKER_IMAGE}:${BUILD_VERSION}-arm32v7 --os=linux --arch=arm --variant=v7
+  #      docker manifest annotate ${DOCKER_IMAGE}:${BUILD_VERSION} ${DOCKER_IMAGE}:${BUILD_VERSION}-arm64v8 --os=linux --arch=arm64 --variant=v8
+
+  #      docker manifest push ${DOCKER_IMAGE}:${BUILD_VERSION}
+
+  #      TAG=beta
+  #      if [[ ${BUILD_VERSION} != *"beta"* ]]; then
+  #        TAG=latest
+  #      fi
+
+  #      docker manifest create ${DOCKER_IMAGE}:${TAG} \
+  #          ${DOCKER_IMAGE}:${BUILD_VERSION}-amd64 \
+  #          ${DOCKER_IMAGE}:${BUILD_VERSION}-arm32v7 \
+  #          ${DOCKER_IMAGE}:${BUILD_VERSION}-arm64v8
+
+  #      docker manifest annotate ${DOCKER_IMAGE}:${TAG} ${DOCKER_IMAGE}:${BUILD_VERSION}-arm32v7 --os=linux --arch=arm --variant=v7
+  #      docker manifest annotate ${DOCKER_IMAGE}:${TAG} ${DOCKER_IMAGE}:${BUILD_VERSION}-arm64v8 --os=linux --arch=arm64 --variant=v8
+
+  #      docker manifest push ${DOCKER_IMAGE}:${TAG}
+
+  #  - name: Docker Logout
+  #    if: success() && startsWith(github.ref, 'refs/tags/v')
+  #    run: |
+  #      docker logout
